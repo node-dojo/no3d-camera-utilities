@@ -11,6 +11,8 @@ viewport projection and maps the marquee to the entire render frame:
 - output aspect comes from the marquee's pixel dimensions;
 - selection is optional metadata and never changes framing;
 - no implicit padding or camera parenting;
+- the cursor becomes Blender's crosshair while the tool is active;
+- hold `Space` while dragging to reposition the complete frame;
 - cancelling creates no camera.
 
 **Fit Selected Mesh — Orthographic** remains available as the secondary,

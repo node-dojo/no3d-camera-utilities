@@ -51,7 +51,8 @@ def check_projection(projection):
         source_data.lens,
         0.01,
         1000.0,
-        2048,
+        viewport_distance=10.0,
+        long_edge_px=2048,
     )
     error_px = addon.camera_marquee_projection_error_px(scene, camera, corners)
 
@@ -60,6 +61,8 @@ def check_projection(projection):
     assert abs(actual_aspect - expected_aspect) <= 1.0 / min(res_x, res_y)
     assert camera.data.type == projection
     assert camera.parent is None
+    if projection == "ORTHO":
+        assert all((camera.matrix_world.inverted() @ point).z < 0.0 for point in corners)
     assert error_px <= 0.5, (projection, error_px)
     print(f"DRAW_CAMERA_FRAME_{projection}_OK error_px={error_px:.6f}")
 

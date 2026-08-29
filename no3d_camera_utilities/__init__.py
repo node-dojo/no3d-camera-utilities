@@ -1,7 +1,7 @@
 bl_info = {
     "name": "No3d Camera Utilities",
     "author": "Hanuman + Cursor",
-    "version": (1, 1, 0),
+    "version": (1, 1, 1),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > No3d Cam",
     "description": "2D/3D mesh camera tools, framing, and render utilities",
@@ -544,6 +544,7 @@ def configure_camera_from_view_marquee(
     viewport_lens,
     clip_start,
     clip_end,
+    viewport_distance=0.0,
     long_edge_px=DEFAULT_LONG_EDGE_PX,
 ):
     """Make the camera's complete render frame equal the viewport marquee.
@@ -576,6 +577,17 @@ def configure_camera_from_view_marquee(
 
     if projection == "ORTHO":
         cam_data.type = "ORTHO"
+        # Blender's orthographic view matrix is centered on the navigation
+        # pivot rather than a meaningful eye point. Move the camera backward
+        # along its local Z axis so geometry on the viewport plane is in front
+        # of the camera instead of coplanar with it.
+        if viewport_distance > 0.0:
+            world_m = cam_obj.matrix_world.copy()
+            world_m.translation += world_m.to_3x3() @ Vector(
+                (0.0, 0.0, float(viewport_distance))
+            )
+            cam_obj.matrix_world = world_m
+            cam_inv = cam_obj.matrix_world.inverted()
         local = [cam_inv @ point for point in corners_world]
         min_x, max_x = min(p.x for p in local), max(p.x for p in local)
         min_y, max_y = min(p.y for p in local), max(p.y for p in local)
@@ -1619,6 +1631,13 @@ class VIEW3D_OT_draw_camera_frame(bpy.types.Operator):
             bpy.types.SpaceView3D.draw_handler_remove(self._draw_handle, "WINDOW")
             self._draw_handle = None
 
+    def _finish_interaction(self, context):
+        self._remove_draw_handler()
+        try:
+            context.window.cursor_modal_restore()
+        except Exception:
+            pass
+
     def _draw_callback(self, _context):
         if not getattr(self, "_dragging", False):
             return
@@ -1653,6 +1672,7 @@ class VIEW3D_OT_draw_camera_frame(bpy.types.Operator):
         self._viewport_lens = float(context.space_data.lens)
         self._clip_start = float(context.space_data.clip_start)
         self._clip_end = float(context.space_data.clip_end)
+        self._viewport_distance = float(rv3d.view_distance)
         self._projection = "ORTHO" if rv3d.view_perspective == "ORTHO" else "PERSP"
         if rv3d.view_perspective == "CAMERA" and context.scene.camera is not None:
             self._projection = "ORTHO" if context.scene.camera.data.type == "ORTHO" else "PERSP"
@@ -1660,6 +1680,7 @@ class VIEW3D_OT_draw_camera_frame(bpy.types.Operator):
         self._start = (event.mouse_region_x, event.mouse_region_y)
         self._end = self._start
         self._dragging = False
+        self._moving = False
         self._draw_handle = bpy.types.SpaceView3D.draw_handler_add(
             self._draw_callback,
             (context,),
@@ -1667,6 +1688,7 @@ class VIEW3D_OT_draw_camera_frame(bpy.types.Operator):
             "POST_PIXEL",
         )
         context.window_manager.modal_handler_add(self)
+        context.window.cursor_modal_set("CROSSHAIR")
         context.area.tag_redraw()
         self.report(
             {"INFO"},
@@ -1676,7 +1698,7 @@ class VIEW3D_OT_draw_camera_frame(bpy.types.Operator):
 
     def modal(self, context, event):
         if event.type in {"ESC", "RIGHTMOUSE"}:
-            self._remove_draw_handler()
+            self._finish_interaction(context)
             context.area.tag_redraw()
             self.report({"INFO"}, "Draw Camera Frame cancelled; no camera created.")
             return {"CANCELLED"}
@@ -1685,11 +1707,35 @@ class VIEW3D_OT_draw_camera_frame(bpy.types.Operator):
             self._start = (event.mouse_region_x, event.mouse_region_y)
             self._end = self._start
             self._dragging = True
+            self._moving = False
             context.area.tag_redraw()
             return {"RUNNING_MODAL"}
 
+        if event.type == "SPACE" and self._dragging:
+            if event.value == "PRESS" and not self._moving:
+                self._moving = True
+                self._move_mouse = (event.mouse_region_x, event.mouse_region_y)
+                self._move_start = self._start
+                self._move_end = self._end
+            elif event.value == "RELEASE":
+                self._moving = False
+            return {"RUNNING_MODAL"}
+
         if event.type == "MOUSEMOVE" and self._dragging:
-            self._end = (event.mouse_region_x, event.mouse_region_y)
+            if self._moving:
+                region_w, region_h = self._region_size
+                dx = event.mouse_region_x - self._move_mouse[0]
+                dy = event.mouse_region_y - self._move_mouse[1]
+                sx, sy = self._move_start
+                ex, ey = self._move_end
+                min_x, max_x = min(sx, ex), max(sx, ex)
+                min_y, max_y = min(sy, ey), max(sy, ey)
+                dx = max(-min_x, min(region_w - max_x, dx))
+                dy = max(-min_y, min(region_h - max_y, dy))
+                self._start = (sx + dx, sy + dy)
+                self._end = (ex + dx, ey + dy)
+            else:
+                self._end = (event.mouse_region_x, event.mouse_region_y)
             context.area.tag_redraw()
             return {"RUNNING_MODAL"}
 
@@ -1701,7 +1747,7 @@ class VIEW3D_OT_draw_camera_frame(bpy.types.Operator):
             left, right = sorted((max(0, min(region_w, x0)), max(0, min(region_w, x1))))
             bottom, top = sorted((max(0, min(region_h, y0)), max(0, min(region_h, y1))))
             if (right - left) < 8 or (top - bottom) < 8:
-                self._remove_draw_handler()
+                self._finish_interaction(context)
                 context.area.tag_redraw()
                 self.report({"ERROR"}, "Camera frame is too small. Drag a larger rectangle.")
                 return {"CANCELLED"}
@@ -1723,6 +1769,7 @@ class VIEW3D_OT_draw_camera_frame(bpy.types.Operator):
                     self._viewport_lens,
                     self._clip_start,
                     self._clip_end,
+                    self._viewport_distance,
                     self.long_edge_px,
                 )
                 error_px = camera_marquee_projection_error_px(context.scene, cam_obj, corners)
@@ -1761,7 +1808,7 @@ class VIEW3D_OT_draw_camera_frame(bpy.types.Operator):
                 self.report({"ERROR"}, f"Draw Camera Frame failed: {exc}")
                 result = {"CANCELLED"}
 
-            self._remove_draw_handler()
+            self._finish_interaction(context)
             context.area.tag_redraw()
             return result
 
