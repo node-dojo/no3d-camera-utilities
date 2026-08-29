@@ -1,5 +1,21 @@
 # No3d Camera Utilities
 
+## Draw Camera Frame
+
+Position the 3D viewport exactly as desired, run **Draw Camera Frame**, then
+drag the complete output boundary. The resulting camera preserves the current
+viewport projection and maps the marquee to the entire render frame:
+
+- orthographic viewport → orthographic camera;
+- perspective viewport → perspective camera with solved lens and shift;
+- output aspect comes from the marquee's pixel dimensions;
+- selection is optional metadata and never changes framing;
+- no implicit padding or camera parenting;
+- cancelling creates no camera.
+
+**Fit Selected Mesh — Orthographic** remains available as the secondary,
+geometry-driven workflow.
+
 A Blender add-on providing 2D/3D mesh camera tools, framing helpers, and render utilities.
 
 ## Features
