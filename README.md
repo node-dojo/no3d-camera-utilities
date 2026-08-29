@@ -1,8 +1,29 @@
 # No3d Camera Utilities
 
-No3d Camera Utilities 1.1.1 provides viewport-first camera framing and a
+No3d Camera Utilities 1.2.0 provides viewport-first camera framing, reusable
+camera presets, and a
 separate geometry-driven orthographic fit workflow. It is developed and
 verified in Blender 5.2+.
+
+## Camera Presets
+
+Open `N-panel → No3d Cam → Camera Framing → Add Camera Preset`.
+
+### 100mm Ortho - Icon cam
+
+This preset creates a ready-to-use top-down icon camera with:
+
+- orthographic projection and a physical 100 mm orthographic scale;
+- a position exactly 100 mm above its chosen center on world Z;
+- square 2048×2048 render output;
+- a parented, non-rendering 4×4 edge grid marking the frame and thirds;
+- the new camera selected and assigned as the scene camera.
+
+**Automatic Placement** uses the selected non-camera object's world-bounds
+center when available, otherwise the current viewport navigation center, and
+finally the world origin. The preset menu also exposes explicit Selected
+Object, View, and World placement commands. Adding the preset never requires a
+selection or a setup dialog.
 
 ## Draw Camera Frame
 

@@ -1,7 +1,7 @@
 bl_info = {
     "name": "No3d Camera Utilities",
     "author": "Hanuman + Cursor",
-    "version": (1, 1, 1),
+    "version": (1, 2, 0),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > No3d Cam",
     "description": "2D/3D mesh camera tools, framing, and render utilities",
@@ -16,7 +16,7 @@ import platform
 import re
 import shutil
 import subprocess
-from bpy.props import BoolProperty, FloatProperty, IntProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty
 from bpy_extras.object_utils import world_to_camera_view
 from mathutils import Vector
 
@@ -671,6 +671,55 @@ def camera_marquee_projection_error_px(scene, cam_obj, corners_world):
     return max_error
 
 
+def scene_units_for_millimeters(scene, millimeters):
+    """Convert a physical millimeter measurement to Blender scene units."""
+    scale_length = float(scene.unit_settings.scale_length)
+    if scene.unit_settings.system == "NONE" or scale_length <= 1e-12:
+        return float(millimeters)
+    return (float(millimeters) / 1000.0) / scale_length
+
+
+def object_world_bounds_center(obj):
+    if obj is None:
+        return None
+    if getattr(obj, "bound_box", None):
+        points = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+        if points:
+            return sum(points, Vector()) / len(points)
+    return obj.matrix_world.translation.copy()
+
+
+def create_thirds_guide(scene, camera_obj, center, size):
+    """Create a non-rendering 4x4 edge grid on the camera's subject plane."""
+    half = 0.5 * float(size)
+    thirds = (-half, -half / 3.0, half / 3.0, half)
+    vertices = []
+    edges = []
+    for x in thirds:
+        start = len(vertices)
+        vertices.extend(((x, -half, 0.0), (x, half, 0.0)))
+        edges.append((start, start + 1))
+    for y in thirds:
+        start = len(vertices)
+        vertices.extend(((-half, y, 0.0), (half, y, 0.0)))
+        edges.append((start, start + 1))
+
+    mesh = bpy.data.meshes.new("threes guide mesh")
+    mesh.from_pydata(vertices, edges, [])
+    mesh.update()
+    guide = bpy.data.objects.new("threes guide", mesh)
+    scene.collection.objects.link(guide)
+    guide.location = center
+    guide.display_type = "WIRE"
+    guide.show_in_front = True
+    guide.hide_render = True
+    guide["no3d_camera_guide"] = "thirds"
+    guide.parent = camera_obj
+    guide.matrix_parent_inverse.identity()
+    guide.location = (0.0, 0.0, -float(size))
+    return guide
+
+
 def camera_local_aspect_from_points(cam_obj, points):
     if not points:
         return 1.0
@@ -1044,6 +1093,130 @@ class OBJECT_OT_make_mesh_camera(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class OBJECT_OT_add_100mm_ortho_icon_camera(bpy.types.Operator):
+    bl_idname = "object.add_100mm_ortho_icon_camera"
+    bl_label = "100mm Ortho - Icon cam"
+    bl_description = "Add a top-down 100 mm orthographic icon camera with a parented thirds guide"
+    bl_options = {"REGISTER", "UNDO"}
+
+    placement: EnumProperty(
+        name="Placement",
+        items=(
+            ("AUTO", "Automatic", "Selected object, then viewport center, then world center"),
+            ("OBJECT", "Selected Object", "Center on the selected object's world bounds"),
+            ("VIEW", "Viewport Center", "Center on the current viewport navigation point"),
+            ("WORLD", "World Center", "Center on the world origin"),
+        ),
+        default="AUTO",
+    )
+
+    def _object_target(self, context):
+        obj = context.active_object
+        if obj is None or obj.type == "CAMERA":
+            return None
+        if obj.get("no3d_camera_guide") or obj.name.lower().startswith("threes guide"):
+            return None
+        return obj
+
+    def execute(self, context):
+        scene = context.scene
+        target = self._object_target(context)
+        placement = self.placement
+        if placement == "AUTO":
+            if target is not None:
+                placement = "OBJECT"
+            elif context.region_data is not None:
+                placement = "VIEW"
+            else:
+                placement = "WORLD"
+
+        if placement == "OBJECT":
+            if target is None:
+                self.report({"ERROR"}, "Select a non-camera object for object-centered placement.")
+                return {"CANCELLED"}
+            center = object_world_bounds_center(target)
+        elif placement == "VIEW":
+            if context.region_data is None:
+                self.report({"ERROR"}, "Viewport-centered placement requires a 3D Viewport.")
+                return {"CANCELLED"}
+            center = context.region_data.view_location.copy()
+        else:
+            center = Vector((0.0, 0.0, 0.0))
+
+        size = scene_units_for_millimeters(scene, 100.0)
+        cam_data = bpy.data.cameras.new("100mm Ortho - Icon cam data")
+        cam_obj = bpy.data.objects.new("100mm Ortho - Icon cam", cam_data)
+        scene.collection.objects.link(cam_obj)
+        guide = None
+        try:
+            cam_data.type = "ORTHO"
+            cam_data.ortho_scale = size
+            cam_data.display_size = max(size * 0.05, 0.01)
+            cam_data.show_passepartout = True
+            cam_data.clip_start = max(size * 0.001, 1e-6)
+            cam_data.clip_end = max(size * 100.0, size + 1.0)
+            cam_obj.location = (center.x, center.y, center.z + size)
+            cam_obj.rotation_euler = (0.0, 0.0, 0.0)
+            cam_obj["no3d_camera_preset"] = "100mm_ortho_icon_cam"
+            cam_obj["no3d_camera_placement"] = placement
+            if target is not None and placement == "OBJECT":
+                cam_obj["no3d_camera_subject"] = target.name
+
+            guide = create_thirds_guide(scene, cam_obj, center, size)
+            scene.render.resolution_x = 2048
+            scene.render.resolution_y = 2048
+            scene.render.resolution_percentage = 100
+            scene.render.pixel_aspect_x = 1.0
+            scene.render.pixel_aspect_y = 1.0
+            cam_obj[PAIR_RES_X] = 2048
+            cam_obj[PAIR_RES_Y] = 2048
+            scene.camera = cam_obj
+
+            bpy.ops.object.select_all(action="DESELECT")
+            cam_obj.select_set(True)
+            context.view_layer.objects.active = cam_obj
+        except Exception as exc:
+            if guide is not None and guide.name in bpy.data.objects:
+                guide_mesh = guide.data
+                bpy.data.objects.remove(guide, do_unlink=True)
+                if guide_mesh is not None and guide_mesh.users == 0:
+                    bpy.data.meshes.remove(guide_mesh)
+            if cam_obj.name in bpy.data.objects:
+                bpy.data.objects.remove(cam_obj, do_unlink=True)
+            if cam_data.name in bpy.data.cameras:
+                bpy.data.cameras.remove(cam_data)
+            self.report({"ERROR"}, f"Could not add icon camera: {exc}")
+            return {"CANCELLED"}
+
+        self.report(
+            {"INFO"},
+            f"Added {cam_obj.name} at {placement.lower()} center with parented thirds guide.",
+        )
+        return {"FINISHED"}
+
+
+class VIEW3D_MT_no3d_camera_presets(bpy.types.Menu):
+    bl_idname = "VIEW3D_MT_no3d_camera_presets"
+    bl_label = "Add Camera Preset"
+
+    def draw(self, _context):
+        layout = self.layout
+        layout.label(text="100mm Ortho - Icon cam", icon="CAMERA_DATA")
+        op = layout.operator(
+            "object.add_100mm_ortho_icon_camera",
+            text="Automatic Placement",
+            icon="ADD",
+        )
+        op.placement = "AUTO"
+        layout.separator()
+        op = layout.operator("object.add_100mm_ortho_icon_camera", text="Center on Selected Object")
+        op.placement = "OBJECT"
+        op = layout.operator("object.add_100mm_ortho_icon_camera", text="Center on View")
+        op.placement = "VIEW"
+        op = layout.operator("object.add_100mm_ortho_icon_camera", text="Center on World")
+        op.placement = "WORLD"
+
+
 class VIEW3D_PT_make_mesh_camera_2d(bpy.types.Panel):
     bl_label = "Selected Mesh Fit"
     bl_idname = "VIEW3D_PT_make_mesh_camera_2d"
@@ -1066,6 +1239,8 @@ class VIEW3D_PT_make_mesh_camera_3d(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
+        layout.menu("VIEW3D_MT_no3d_camera_presets", icon="ADD")
+        layout.separator()
         layout.operator("view3d.draw_camera_frame", icon="VIEWZOOM")
         layout.label(text="Viewport + boundary define the complete image.", icon="INFO")
         layout.label(text="Selection is optional and never changes framing.")
@@ -2290,6 +2465,8 @@ classes = (
     WM_OT_hanuman_apply_pie_hotkey,
     OBJECT_OT_make_mesh_camera,
     OBJECT_OT_refresh_mesh_camera,
+    OBJECT_OT_add_100mm_ortho_icon_camera,
+    VIEW3D_MT_no3d_camera_presets,
     VIEW3D_OT_draw_camera_frame,
     OBJECT_OT_make_3d_mesh_camera,
     OBJECT_OT_make_3d_mesh_camera_marquee,
