@@ -6,6 +6,8 @@ Run with:
 
 from pathlib import Path
 import sys
+import tempfile
+from types import SimpleNamespace
 
 import bpy
 from mathutils import Matrix
@@ -69,4 +71,48 @@ def check_projection(projection):
 
 check_projection("PERSP")
 check_projection("ORTHO")
+
+original_filepath = bpy.data.filepath
+assert addon.framed_view_output_path.__name__ == "framed_view_output_path"
+with tempfile.TemporaryDirectory() as temp_dir:
+    blend_path = str(Path(temp_dir) / "framed-test.blend")
+    bpy.ops.wm.save_as_mainfile(filepath=blend_path)
+    output_path = Path(addon.framed_view_output_path())
+    assert output_path.parent == Path(temp_dir)
+    assert output_path.name.startswith("framed_view_")
+    assert output_path.suffix == ".png"
+    render_scene = addon.create_framed_render_scene(bpy.context.scene, str(output_path))
+    assert render_scene.render.image_settings.file_format == "PNG"
+    bpy.data.scenes.remove(render_scene)
+
+visible = bpy.data.objects.new("Visible", None)
+hidden = bpy.data.objects.new("Viewport Hidden", None)
+bpy.context.scene.collection.objects.link(visible)
+bpy.context.scene.collection.objects.link(hidden)
+hidden.hide_set(True)
+snapshot = addon.snapshot_hide_render(bpy.context.scene)
+addon.hide_viewport_hidden_for_render(bpy.context)
+assert visible.hide_render is False
+assert hidden.hide_render is True
+addon.restore_hide_render(bpy.context.scene, snapshot)
+assert hidden.hide_render is False
+
+visible.hide_render = True
+enabled, disabled, changed = addon.match_render_visibility_to_viewport(bpy.context)
+assert (enabled, disabled, changed) == (len(bpy.context.scene.objects) - 1, 1, 2)
+assert visible.hide_render is False
+assert hidden.hide_render is True
+
+addon.register()
+assert hasattr(bpy.ops.render, "no3d_framed_view_clipboard")
+assert hasattr(bpy.ops.render, "no3d_match_visibility_to_viewport")
+plain_camera_data = bpy.data.cameras.new("Plain Active Camera Data")
+plain_camera = bpy.data.objects.new("Plain Active Camera", plain_camera_data)
+bpy.context.scene.collection.objects.link(plain_camera)
+plain_camera_context = SimpleNamespace(
+    scene=SimpleNamespace(camera=plain_camera),
+    area=SimpleNamespace(type="VIEW_3D"),
+)
+assert addon.RENDER_OT_no3d_framed_view_clipboard.poll(plain_camera_context)
+addon.unregister()
 print("DRAW_CAMERA_FRAME_TEST_OK")

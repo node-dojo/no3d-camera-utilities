@@ -1,6 +1,6 @@
 # No3d Camera Utilities
 
-No3d Camera Utilities 1.2.0 provides viewport-first camera framing, reusable
+No3d Camera Utilities 1.3.0 provides viewport-first camera framing, reusable
 camera presets, and a
 separate geometry-driven orthographic fit workflow. It is developed and
 verified in Blender 5.2+.
@@ -64,6 +64,35 @@ boundary.
 After completion, the new camera becomes the scene camera and Blender enters
 camera view. The saved render should contain the region that was inside the
 marquee.
+
+### Render Active Camera to Clipboard
+
+Use **Render Active Camera to Clipboard** in the Mesh Camera Render panel. It
+works with any active scene camera, including one created by Draw Camera Frame.
+This purpose-built output action:
+
+- uses the active scene camera regardless of how it was created;
+- temporarily excludes objects and collections hidden in the invoking 3D
+  viewport, while retaining existing render exclusions;
+- writes a uniquely timestamped PNG beside the saved `.blend` file;
+- copies that PNG to the macOS clipboard; and
+- restores the scene's render path, image settings, and object render
+  visibility after completion.
+
+The `.blend` must be saved so its containing directory is unambiguous. The
+operator is intentionally distinct from **Render Mesh Camera**, which requires
+a selected mesh and its paired orthographic camera, and **Render Active 3D
+Camera**, which follows the broader scene-camera workflow and its configurable
+output options.
+
+### Match Render Visibility to Viewport
+
+Use **Match Render Visibility to Viewport** when the Outliner's render toggles
+should permanently adopt the visibility state of the invoking 3D viewport.
+Every scene object currently visible becomes render-enabled, and every object
+hidden by object, collection, view-layer, or local-view state becomes
+render-disabled. This is an explicit state-changing operation with Blender Undo
+support; it is separate from the framed render's temporary visibility matching.
 
 ## Selected Mesh Fit
 
